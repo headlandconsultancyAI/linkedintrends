@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -34,6 +35,12 @@ MAX_ATTEMPTS = 3      # transient failures get retried on later builds, then giv
 VIDEO_CAP_MB = 150    # fallback downloads of a whole video stop past this
 MANIFEST = "manifest.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
+# LinkedIn's media servers can treat requests differently when they don't look
+# like they came from a LinkedIn page, so send the headers a browser would.
+REFERER = "https://www.linkedin.com/"
+HTTP_HEADERS = {"User-Agent": UA, "Referer": REFERER, "Origin": "https://www.linkedin.com", "Accept": "*/*"}
+# Bumped when the fetching logic changes, so earlier failures get a fresh go.
+MEDIA_VERSION = 2
 
 
 def file_id(key):
@@ -67,7 +74,7 @@ def _download(url, cap_mb):
     fd, path = tempfile.mkstemp(suffix=".bin")
     os.close(fd)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        req = urllib.request.Request(url, headers=HTTP_HEADERS)
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r, open(path, "wb") as f:
             total = 0
             while True:
@@ -84,10 +91,28 @@ def _download(url, cap_mb):
         return None
 
 
+def probe(url):
+    """What the server actually sends back, for the build log. Never prints the
+    link itself: it carries a signature, and Actions logs on a public repo are public."""
+    try:
+        req = urllib.request.Request(url, headers=dict(HTTP_HEADERS, Range="bytes=0-1023"))
+        with urllib.request.urlopen(req, timeout=20) as r:
+            head = r.read(48)
+            return "HTTP %s, type %s, size %s, starts %r" % (
+                r.status, r.headers.get("Content-Type"),
+                r.headers.get("Content-Range") or r.headers.get("Content-Length"), head)
+    except urllib.error.HTTPError as e:
+        return "HTTP %s, type %s, starts %r" % (e.code, e.headers.get("Content-Type"), e.read(48))
+    except Exception as e:
+        return "no response: %s" % e
+
+
 def _ffmpeg(url, out, kind):
     scale = "scale='min(%d,iw)':-2" % WIDTH
     base = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y"]
-    net = ["-user_agent", UA, "-rw_timeout", str(30 * 1000000)] if url.startswith("http") else []
+    net = (["-user_agent", UA,
+            "-headers", "Referer: %s\r\nOrigin: https://www.linkedin.com\r\n" % REFERER,
+            "-rw_timeout", str(30 * 1000000)] if url.startswith("http") else [])
     tail = ["-frames:v", "1", "-vf", scale, "-q:v", str(QUALITY), str(out)]
 
     attempts = []
@@ -167,6 +192,8 @@ def update(records, media_dir, key_fn):
             continue
         if status == "none":
             continue
+        if status == "failed" and entry.get("v") != MEDIA_VERSION:
+            entry = dict(entry, attempts=0)
         if status == "failed" and entry.get("attempts", 0) >= MAX_ATTEMPTS:
             continue
         # "expired" is re-checked every build: the history merge swaps in the
@@ -192,17 +219,20 @@ def update(records, media_dir, key_fn):
         k, kind, url, attempts = item
         name = file_id(k) + ".jpg"
         ok, err = _ffmpeg(url, media_dir / name, kind)
-        return k, kind, name, ok, err, attempts
+        return k, kind, name, ok, err, attempts, url
 
+    examples = {}
     if todo:
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            for k, kind, name, ok, err, attempts in pool.map(work, todo):
+            for k, kind, name, ok, err, attempts, url in pool.map(work, todo):
                 if ok:
                     manifest[k] = {"status": "ok", "kind": kind, "file": name}
                     fetched += 1
                 else:
-                    manifest[k] = {"status": "failed", "kind": kind, "attempts": attempts + 1, "error": err}
+                    manifest[k] = {"status": "failed", "kind": kind, "attempts": attempts + 1,
+                                   "error": err, "v": MEDIA_VERSION}
                     failed += 1
+                    examples.setdefault((kind, err), url)
 
     mpath.write_text(json.dumps(manifest, indent=0, sort_keys=True), encoding="utf-8")
 
@@ -212,7 +242,10 @@ def update(records, media_dir, key_fn):
     if failed:
         import collections
         reasons = collections.Counter(
-            v.get("error", "?") for v in manifest.values() if v.get("status") == "failed")
-        for reason, n in reasons.most_common(3):
-            print("media:   %s failed with: %s" % (n, reason))
+            (v.get("kind"), v.get("error", "?")) for v in manifest.values()
+            if v.get("status") == "failed" and v.get("v") == MEDIA_VERSION)
+        for (kind, reason), n in reasons.most_common(4):
+            print("media:   %s %s failed with: %s" % (n, kind, reason))
+            if (kind, reason) in examples and "404" not in reason:
+                print("media:     server says: %s" % probe(examples[(kind, reason)]))
     return ok_files
