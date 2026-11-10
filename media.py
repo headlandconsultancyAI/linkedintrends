@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 WIDTH = 520           # px; displayed at about 200, so this is sharp on retina
 QUALITY = 6           # ffmpeg JPEG scale, 2 best to 31 worst; 6 keeps files ~30-50KB
@@ -33,6 +33,7 @@ WORKERS = 6
 TIMEOUT = 60          # seconds per item
 MAX_ATTEMPTS = 3      # transient failures get retried on later builds, then given up
 VIDEO_CAP_MB = 150    # fallback downloads of a whole video stop past this
+HLS_SEGMENTS = 2      # chunks of a streamed video to fetch; a few seconds of footage
 MANIFEST = "manifest.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
 # LinkedIn's media servers can treat requests differently when they don't look
@@ -40,7 +41,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 REFERER = "https://www.linkedin.com/"
 HTTP_HEADERS = {"User-Agent": UA, "Referer": REFERER, "Origin": "https://www.linkedin.com", "Accept": "*/*"}
 # Bumped when the fetching logic changes, so earlier failures get a fresh go.
-MEDIA_VERSION = 2
+MEDIA_VERSION = 3
 
 
 def file_id(key):
@@ -107,6 +108,108 @@ def probe(url):
         return "no response: %s" % e
 
 
+# ---------------------------------------------------------------------------
+# Streamed video (HLS)
+#
+# LinkedIn's video links point at a playlist (#EXTM3U), not a video file. The
+# playlist lists several quality levels; each level lists the small chunks the
+# video is cut into. We read it ourselves rather than leaving it to ffmpeg,
+# whose playlist handling varies by version and is fussy about chunk names.
+# ---------------------------------------------------------------------------
+
+def _get(url, byterange=None, limit=8 << 20):
+    headers = dict(HTTP_HEADERS)
+    if byterange:
+        length, offset = byterange
+        headers["Range"] = "bytes=%d-%d" % (offset, offset + length - 1)
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("response over %d bytes" % limit)
+    return data
+
+
+def _resolve(base, ref):
+    """Absolute URL for a playlist entry. LinkedIn signs the playlist link; if an
+    entry comes without its own signature, carry the playlist's across."""
+    url = urljoin(base, ref)
+    if not urlparse(url).query and urlparse(base).query:
+        url += "?" + urlparse(base).query
+    return url
+
+
+def _attrs(line):
+    """Parse KEY=VALUE,KEY="VALUE" attribute lists from an #EXT tag."""
+    body = line.split(":", 1)[1] if ":" in line else ""
+    return {m.group(1): m.group(2).strip('"')
+            for m in re.finditer(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)', body)}
+
+
+def _byterange(spec, last_end):
+    """"n@o" or "n" (continuing from the previous range) -> (length, offset)."""
+    if not spec:
+        return None
+    n, _, o = spec.partition("@")
+    return int(n), int(o) if o else last_end
+
+
+def hls_sample(url):
+    """Fetch the start of a streamed video into a temp file ffmpeg can read.
+
+    Returns the file path, or None if this isn't a playlist we can handle.
+    """
+    text = _get(url, limit=1 << 20).decode("utf-8", "replace")
+    if not text.lstrip().startswith("#EXTM3U"):
+        return None
+    base = url
+
+    # Master playlist: pick the smallest quality level with a picture.
+    if "#EXT-X-STREAM-INF" in text:
+        lines = [l.strip() for l in text.splitlines()]
+        variants = []
+        for i, line in enumerate(lines):
+            if line.startswith("#EXT-X-STREAM-INF"):
+                nxt = next((l for l in lines[i + 1:] if l and not l.startswith("#")), None)
+                if nxt:
+                    a = _attrs(line)
+                    variants.append((0 if "RESOLUTION" in a else 1,
+                                     int(a.get("BANDWIDTH", "0") or 0), nxt))
+        if not variants:
+            return None
+        variants.sort()
+        base = _resolve(url, variants[0][2])
+        text = _get(base, limit=1 << 20).decode("utf-8", "replace")
+
+    init, segments, pending_range, last_end = None, [], None, 0
+    for line in (l.strip() for l in text.splitlines()):
+        if line.startswith("#EXT-X-KEY"):
+            if _attrs(line).get("METHOD", "NONE").upper() != "NONE":
+                return None                     # encrypted; not worth the bother
+        elif line.startswith("#EXT-X-MAP"):
+            a = _attrs(line)
+            if a.get("URI"):
+                init = (_resolve(base, a["URI"]), _byterange(a.get("BYTERANGE"), 0))
+        elif line.startswith("#EXT-X-BYTERANGE"):
+            pending_range = _byterange(line.split(":", 1)[1], last_end)
+        elif line and not line.startswith("#"):
+            segments.append((_resolve(base, line), pending_range))
+            if pending_range:
+                last_end = pending_range[1] + pending_range[0]
+            pending_range = None
+            if len(segments) >= HLS_SEGMENTS:
+                break
+    if not segments:
+        return None
+
+    ext = ".mp4" if init or ".m4s" in segments[0][0] or ".mp4" in segments[0][0] else ".ts"
+    fd, path = tempfile.mkstemp(suffix=ext)
+    with os.fdopen(fd, "wb") as f:
+        for part_url, rng in ([init] if init else []) + segments:
+            f.write(_get(part_url, rng))
+    return path
+
+
 def _ffmpeg(url, out, kind):
     scale = "scale='min(%d,iw)':-2" % WIDTH
     base = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y"]
@@ -133,6 +236,22 @@ def _ffmpeg(url, out, kind):
         return False, (lines[-1] if lines else "ffmpeg failed")[:160]
 
     err = ""
+    if kind == "video" and url.startswith("http"):
+        sample = None
+        try:
+            sample = hls_sample(url)
+        except Exception as e:
+            err = "playlist: %s" % str(e)[:140]
+        if sample:
+            try:
+                for ss in (["-ss", "1"], []):
+                    ok, err = run(base + ss + ["-i", sample] + tail)
+                    if ok:
+                        return True, ""
+            finally:
+                os.remove(sample)
+    hls_err = err
+
     for cmd in attempts:
         ok, err = run(cmd)
         if ok:
@@ -153,7 +272,7 @@ def _ffmpeg(url, out, kind):
 
     if out.exists():
         out.unlink()
-    return False, err
+    return False, hls_err or err
 
 
 def update(records, media_dir, key_fn):
