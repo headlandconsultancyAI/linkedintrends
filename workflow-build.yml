@@ -27,6 +27,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check ffmpeg is available
+        run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+
       - name: Pull from Apify and rebuild
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
@@ -34,6 +37,7 @@ jobs:
           python build_dashboard.py \
             --task "${{ vars.APIFY_TASK_ID }}" \
             --history data/history.json \
+            --media data/media \
             --max-age-days 365 \
             --client "${{ vars.CLIENT_NAME }}" \
             --title "LinkedIn signal board" \
@@ -43,7 +47,7 @@ jobs:
         run: |
           git config user.name  "signal-board"
           git config user.email "actions@users.noreply.github.com"
-          git add data/history.json
+          git add -A data/
           git diff --staged --quiet || git commit -m "History as at $(date -u +%Y-%m-%d)"
           git push
 
