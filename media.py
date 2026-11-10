@@ -209,4 +209,10 @@ def update(records, media_dir, key_fn):
     ok_files = {k: v["file"] for k, v in manifest.items() if v.get("status") == "ok"}
     print("media: %s thumbnails held (%s new, %s failed, %s links already expired, %s pruned)"
           % (len(ok_files), fetched, failed, expired, pruned))
+    if failed:
+        import collections
+        reasons = collections.Counter(
+            v.get("error", "?") for v in manifest.values() if v.get("status") == "failed")
+        for reason, n in reasons.most_common(3):
+            print("media:   %s failed with: %s" % (n, reason))
     return ok_files
