@@ -166,7 +166,14 @@ def extract_entities(raw, profiles):
     return registry, ids
 
 
-def prepare(raw):
+def post_key(record):
+    meta = record.get("_metadata") or {}
+    return meta.get("post_id") or record.get("post_url") or record.get("share_url")
+
+
+def prepare(raw, thumbs=None, media_prefix="media/"):
+    """thumbs maps post key -> saved thumbnail filename (from media.update)."""
+    thumbs = thumbs or {}
     profiles = tracked_authors(raw)
     registry, ent_ids = extract_entities(raw, profiles)
     posts = []
@@ -212,6 +219,10 @@ def prepare(raw):
                 "terms": terms,
                 "ents": ent_ids[pos],
                 "media": media_kind(p),
+                "thumb": (media_prefix + thumbs[str(post_key(p))]) if str(post_key(p)) in thumbs else None,
+                "n_img": len(p.get("images") or []) if not p.get("video_url") else 0,
+                "n_slides": len((p.get("doc") or {}).get("slide_images") or []),
+                "art": ((p.get("article") or {}).get("title") or None) if media_kind(p) == "article" else None,
                 "repost": bool(p.get("is_repost")),
                 "reposted_from": p.get("author_name") if p.get("is_repost") else None,
                 "mentions": sorted({m.get("name") for m in (p.get("mentions") or []) if m.get("name")}),

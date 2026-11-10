@@ -1,4 +1,4 @@
-# LinkedIn trends dashboard
+# LinkedIn signal board
 
 Turns an Apify LinkedIn-posts export into a single self-contained HTML dashboard
 you can email to a client. No server, no token in the output, no dependencies
@@ -13,6 +13,7 @@ beyond the Python standard library.
 | `prepare.py` | Normalises the Apify records, tags topics, scores engagement. |
 | `template.html` | The dashboard itself. Edit for layout, palette, copy. |
 | `build_dashboard.py` | Pulls the data and writes the dated output file. |
+| `media.py` | Saves a thumbnail of each post's image, video still or carousel cover. |
 
 ## Running it
 
@@ -81,6 +82,25 @@ python build_dashboard.py --task my-task \
 Posts are keyed on their LinkedIn post id. A post already held is refreshed from
 the newer pull, since engagement keeps climbing after publication. Run it daily
 for a month and every voice has a month of history.
+
+## Thumbnails
+
+LinkedIn's media links expire (images after about 20 days, video and carousel
+slides after about 7), so the dashboard can't just point at them. `--media
+data/media` saves a small copy of each post's visual the first time it's seen:
+
+- **images:** the first image, 520px wide, roughly 20 to 50KB
+- **video:** one still frame with a play badge (the video itself isn't kept)
+- **carousels:** the cover slide
+- **link shares:** no image exists, so the page shows a title card instead
+
+Each thumbnail is fetched once. Links that have already expired are skipped and
+re-checked when a newer scrape refreshes the post. Genuine failures are retried
+on the next two builds, then left alone. Thumbnails for posts that age out of
+the history are deleted with them.
+
+Needs ffmpeg. GitHub's runners have it; on Windows the build skips thumbnails
+and carries on, unless you install ffmpeg (`winget install ffmpeg`).
 
 ## Hosting it live
 

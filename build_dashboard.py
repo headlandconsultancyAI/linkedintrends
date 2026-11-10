@@ -13,7 +13,8 @@ Or rebuild from an export you already have on disk:
     python build_dashboard.py --file dataset_linkedin-posts-scraper-pro.json
 
 Add --history data/history.json to merge each pull into an accumulating archive
-before building. The scraper caps posts per profile, so a single run gives very
+before building, and --media data/media to keep a thumbnail of each post's
+image, video still or carousel cover (LinkedIn's own links expire in 1-3 weeks). The scraper caps posts per profile, so a single run gives very
 uneven history per voice; merging run after run fixes that over time.
 
 The token is read from the environment and never written into the output, so
@@ -26,10 +27,12 @@ import argparse
 import json
 import os
 import pathlib
+import shutil
 import sys
 from datetime import date
 
-from prepare import prepare
+import media
+from prepare import post_key, prepare
 
 HERE = pathlib.Path(__file__).resolve().parent
 API = "https://api.apify.com/v2"
@@ -121,11 +124,6 @@ def run_actor(actor_id, input_path):
         return json.loads(r.read().decode("utf-8"))
 
 
-def post_key(record):
-    meta = record.get("_metadata") or {}
-    return meta.get("post_id") or record.get("post_url") or record.get("share_url")
-
-
 def merge_history(raw, path, max_age_days=None):
     """Fold this pull into an accumulating archive, keyed on post id.
 
@@ -184,8 +182,9 @@ def merge_history(raw, path, max_age_days=None):
     return records
 
 
-def build(raw, client, title, out_dir):
-    data = prepare(raw)
+def build(raw, client, title, out_dir, media_dir=None):
+    thumbs = media.update(raw, media_dir, post_key) if media_dir else {}
+    data = prepare(raw, thumbs)
     if not data["posts"]:
         sys.exit("No usable posts in that dataset. Check the export has content and _metadata.source_url.")
 
@@ -202,6 +201,18 @@ def build(raw, client, title, out_dir):
 
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Thumbnails ship alongside the page; only the ones this build references.
+    if thumbs:
+        site_media = out_dir / "media"
+        if site_media.exists():
+            shutil.rmtree(site_media)
+        site_media.mkdir()
+        for name in set(thumbs.values()):
+            src = pathlib.Path(media_dir) / name
+            if src.is_file():
+                shutil.copy2(src, site_media / name)
+
     slug = "".join(c if c.isalnum() else "-" for c in client.lower()).strip("-") or "dashboard"
     out = out_dir / ("%s-linkedin-signal-%s.html" % (slug, date.today().isoformat()))
     out.write_text(html, encoding="utf-8")
@@ -225,6 +236,7 @@ def main():
     ap.add_argument("--actor-input", help="JSON file of actor input, used with --run-actor")
     ap.add_argument("--history", help="JSON archive to merge this pull into, then build from")
     ap.add_argument("--max-age-days", type=int, help="drop archived posts older than this")
+    ap.add_argument("--media", help="folder to keep post thumbnails in, e.g. data/media (needs ffmpeg)")
     ap.add_argument("--client", default="Client", help="name shown above the title")
     ap.add_argument("--title", default="LinkedIn signal board", help="dashboard title")
     ap.add_argument("--out", default="out", help="output directory")
@@ -256,7 +268,7 @@ def main():
     if a.history:
         raw = merge_history(raw, a.history, a.max_age_days)
 
-    build(raw, a.client, a.title, a.out)
+    build(raw, a.client, a.title, a.out, a.media)
 
 
 if __name__ == "__main__":

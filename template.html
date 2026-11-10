@@ -125,7 +125,33 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--mint); outline-
 
 /* ---------- posts ---------- */
 .posts-head{display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; justify-content:space-between; margin:52px 0 20px}
-.post{display:grid; grid-template-columns:76px 1fr; gap:0 20px; border-top:1px solid var(--rule-soft); padding:20px 0}
+.post{display:grid; grid-template-columns:76px 1fr 200px; gap:0 22px; border-top:1px solid var(--rule-soft); padding:20px 0}
+.post.bare{grid-template-columns:76px 1fr}
+
+/* visual: saved thumbnail, or a title card for link shares */
+.vis{
+  position:relative; display:block; width:200px; aspect-ratio:4/3; align-self:start;
+  background:var(--ink2); border:1px solid var(--rule-soft); overflow:hidden; text-decoration:none;
+}
+.vis img{display:block; width:100%; height:100%; object-fit:cover}
+.vis:hover{border-color:var(--cyan)}
+.vis:focus-visible{outline:2px solid var(--mint); outline-offset:2px}
+.vis-tag{
+  position:absolute; left:0; bottom:0; font-family:var(--mono); font-size:10px; letter-spacing:.04em;
+  background:rgba(0,23,64,.88); color:var(--paper); padding:3px 7px;
+}
+.vis-play{
+  position:absolute; left:50%; top:50%; width:44px; height:44px; margin:-22px 0 0 -22px;
+  border-radius:50%; background:rgba(0,23,64,.78); border:1px solid rgba(234,241,247,.5);
+}
+.vis-play::after{
+  content:""; position:absolute; left:17px; top:13px;
+  border-style:solid; border-width:9px 0 9px 14px; border-color:transparent transparent transparent var(--paper);
+}
+.vis.card{display:flex; flex-direction:column; justify-content:space-between; padding:12px 13px; border-color:var(--rule)}
+.vis.card span{font-family:var(--mono); font-size:10px; color:var(--cyan); letter-spacing:.08em}
+.vis.card b{font-size:13px; line-height:1.35; color:var(--paper); font-weight:600;
+  display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden}
 .post:last-child{border-bottom:1px solid var(--rule-soft)}
 .score{font-family:var(--mono); text-align:right}
 .score b{display:block; font-size:17px; font-weight:600; line-height:1.2}
@@ -154,7 +180,7 @@ details.method summary{
 }
 details.method summary::-webkit-details-marker{display:none}
 details.method summary::before{content:"+ "; color:var(--dimmer)}
-details.method[open] summary::before{content:"– "}
+details.method[open] summary::before{content:"\2212  "}
 details.method .body{font-size:13.5px; color:var(--dim); max-width:76ch; margin-top:16px}
 details.method h4{font-family:var(--mono); font-size:12.5px; color:var(--paper); margin:20px 0 6px; font-weight:600}
 details.method ul{margin:6px 0; padding-left:20px}
@@ -168,7 +194,8 @@ details.method li{margin-bottom:5px}
   .wrap{padding:0 16px 72px}
   .board-scroll{margin:0 -16px; padding:0 16px}
   .mast h1{font-size:19px}
-  .post{grid-template-columns:1fr; gap:8px}
+  .post,.post.bare{grid-template-columns:1fr; gap:8px}
+  .vis{width:100%; max-width:420px; aspect-ratio:16/10; order:-1}
   .score{text-align:left}
   .score b{display:inline; margin-right:6px}
 }
@@ -263,7 +290,7 @@ details.method li{margin-bottom:5px}
         signal that a topic has landed.</p>
 
       <h4>Named subjects</h4>
-      <p>The default board works at the level of specific things — a person, a brand, a piece of work,
+      <p>The default board works at the level of specific things: a person, a brand, a piece of work,
         an event. These are pulled from three places: LinkedIn's own @-mentions, which come typed as a
         person or a company and are the most reliable; hashtags; and runs of capitalised words in the
         post body and any attached article title.</p>
@@ -284,7 +311,7 @@ details.method li{margin-bottom:5px}
 
       <h4>Broad themes</h4>
       <p>The second board mode uses a keyword framework over the same text. A post can sit in up to four
-        themes, and roughly a third match none — general motivational content with no subject matter
+        themes, and roughly a third match none. General motivational content with no subject matter
         falls out, which is intended. Themes are good for the shape of the conversation and too general
         to brief a post against on their own.</p>
 
@@ -317,6 +344,9 @@ details.method li{margin-bottom:5px}
         <li>A subject can be named in passing. The post text is on the page so you can check whether it
           was the point of the post or a footnote.</li>
         <li>This is a snapshot, not a live feed. The collection date is stamped at the top.</li>
+        <li>Images are small saved copies, since LinkedIn's own media links expire within weeks. Videos
+          show a single still, carousels their cover slide, and multi-image posts their first image.
+          Posts collected after their link had already expired show no image.</li>
       </ul>
     </div>
   </details>
@@ -371,7 +401,7 @@ function selLabel(){
 }
 function renderModeCopy(){
   document.getElementById("board-note").textContent = state.mode === "ent"
-    ? "Each row is a specific subject named in the posts \u2014 a person, a brand, a piece of work, an event. Each square is one tracked voice, sized by their share of that subject's engagement. Two or more squares on a row means separate voices landed on the same thing."
+    ? "Each row is a specific subject named in the posts: a person, a brand, a piece of work, an event. Each square is one tracked voice, sized by their share of that subject's engagement. Two or more squares on a row means separate voices landed on the same thing."
     : "Each row is a broad theme from the keyword framework. Useful for the shape of the conversation, but too general to brief a post against on its own.";
   document.getElementById("ctl-places").style.display = state.mode === "ent" ? "" : "none";
 }
@@ -464,7 +494,7 @@ function renderBoard(rows){
       var size = 7 + Math.round(Math.sqrt(share)*9);
       var op = (0.34 + share*0.66).toFixed(2);
       return "<td class='cell'><span class='dot' style=\"width:"+size+"px;height:"+size+"px;opacity:"+op+
-        ";animation-delay:"+(ri*14+ci*9)+"ms\" title='"+esc(a)+" \u2014 "+num(v)+"'></span></td>";
+        ";animation-delay:"+(ri*14+ci*9)+"ms\" title='"+esc(a)+": "+num(v)+"'></span></td>";
     }).join("");
     var sel = state.sel === r.key;
     var kind = (state.mode === "ent" && r.kind && r.kind !== "other")
@@ -485,7 +515,7 @@ function renderLegend(){
     var thin = state.win && c && c.from > from;
     return "<span class='"+(thin?"warn":"")+"'><b>"+esc(initials(a))+"</b> "+esc(a)+(thin?" \u2020":"")+"</span>";
   });
-  parts.push("<span class='warn'>\u2020 history starts inside this period \u2014 understated</span>");
+  parts.push("<span class='warn'>\u2020 history starts inside this period, so understated</span>");
   el.innerHTML = parts.join("");
 }
 
@@ -528,6 +558,27 @@ function renderDetail(rows){
     "<button class='clear' id='clear-topic'>Clear selection</button>";
 
   document.getElementById("clear-topic").onclick = function(){ state.sel = null; render(); };
+}
+
+/* ---------- render: post visual ---------- */
+function visual(p){
+  var href = p.url ? " href='"+esc(p.url)+"' target='_blank' rel='noopener'" : "";
+  if(p.thumb){
+    var tag = "", play = "";
+    if(p.media === "video"){ play = "<span class='vis-play' aria-hidden='true'></span>"; tag = "Video"; }
+    else if(p.media === "document"){ tag = p.n_slides > 1 ? "Carousel \u00b7 "+p.n_slides+" slides" : "Document"; }
+    else if(p.n_img > 1){ tag = "1 of "+p.n_img+" images"; }
+    var alt = (p.media === "video" ? "Still from " : p.media === "document" ? "Cover of " : "Image from ") +
+      p.author + "\u2019s post";
+    return "<a class='vis'"+href+" aria-label='"+esc(alt)+", open on LinkedIn'>" +
+      "<img src='"+esc(p.thumb)+"' alt='"+esc(alt)+"' loading='lazy' decoding='async' " +
+        "onerror=\"this.parentNode.parentNode.classList.add('bare');this.parentNode.remove()\">" +
+      play + (tag ? "<span class='vis-tag'>"+esc(tag)+"</span>" : "") + "</a>";
+  }
+  if(p.media === "article" && p.art){
+    return "<a class='vis card'"+href+"><span>LINK SHARE</span><b>"+esc(p.art)+"</b></a>";
+  }
+  return "";
 }
 
 /* ---------- render: posts ---------- */
@@ -577,7 +628,8 @@ function renderPosts(list){
           }).join("")
         : "<span class='chip-none'>no theme matched</span>";
     }
-    return "<article class='post'>" +
+    var vis = visual(p);
+    return "<article class='post"+(vis ? "" : " bare")+"'>" +
       "<div class='score'><b>"+num(p.score)+"</b><span>score</span></div>" +
       "<div>" +
         "<div class='meta'><b>"+esc(p.author)+"</b> <i>"+pretty(p.date)+"</i>" +
@@ -589,7 +641,7 @@ function renderPosts(list){
           "<span class='stats'>"+num(p.reactions)+" reactions, "+num(p.comments)+" comments, "+num(p.shares)+" shares</span>" +
           (p.url ? "<a class='open' href='"+esc(p.url)+"' target='_blank' rel='noopener'>Open on LinkedIn</a>" : "") +
         "</div>" +
-      "</div></article>";
+      "</div>" + vis + "</article>";
   }).join("") +
   (list.length > 120 ? "<p class='sec-note' style='margin-top:18px'>Showing the top 120 of "+list.length+" posts.</p>" : "");
 }
