@@ -3,8 +3,6 @@ name: Build signal board
 # The Apify schedule runs the scraper; this runs an hour later and publishes.
 # Adjust the cron to sit after your actor's schedule.
 on:
-  schedule:
-    - cron: "0 7 * * 1-5"     # 07:00 UTC, weekdays
   workflow_dispatch:           # also runnable by hand from the Actions tab
 
 permissions:
