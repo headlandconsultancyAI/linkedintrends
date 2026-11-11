@@ -9395,7 +9395,7 @@
 "status": "ok"
 },
 "7518963221832056832": {
-"attempts": 1,
+"attempts": 2,
 "error": "Error opening input files: Server returned 404 Not Found",
 "kind": "image",
 "status": "failed",
@@ -9606,7 +9606,7 @@
 "status": "ok"
 },
 "7520775372767043584": {
-"attempts": 1,
+"attempts": 2,
 "error": "Error opening input files: Server returned 404 Not Found",
 "kind": "image",
 "status": "failed",
@@ -9912,7 +9912,7 @@
 "status": "ok"
 },
 "7523295311570735105": {
-"attempts": 1,
+"attempts": 2,
 "error": "Error opening input files: Server returned 403 Forbidden (access denied)",
 "kind": "image",
 "status": "failed",
@@ -10236,6 +10236,29 @@
 "7525850410901762048": {
 "file": "7525850410901762048.jpg",
 "kind": "image",
+"status": "ok"
+},
+"7525890502852845568": {
+"file": "7525890502852845568.jpg",
+"kind": "image",
+"status": "ok"
+},
+"7525957997395623938": {
+"file": "7525957997395623938.jpg",
+"kind": "image",
+"status": "ok"
+},
+"7525958837196136448": {
+"file": "7525958837196136448.jpg",
+"kind": "image",
+"status": "ok"
+},
+"7526029931835809793": {
+"status": "none"
+},
+"7526177119349977089": {
+"file": "7526177119349977089.jpg",
+"kind": "video",
 "status": "ok"
 }
 }
